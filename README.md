@@ -19,16 +19,19 @@ Its main job: **when you log a set, show exactly what you did on that set last t
 | **Exercises** | Add, rename or delete exercises, set their muscle group, and mark bodyweight ones. Tap an exercise to see its progress chart. |
 | **Backup** | Export / Import your data. |
 
-**During a workout**, each exercise shows:
+**During a workout**, exercises are grouped by muscle group (BACK, CHEST, …), with a gap between groups. Each exercise starts with **3 sets** (change `DEFAULT_SETS` in `js/app.js`) and shows:
 - **Last time**: every working set from your previous session of that exercise, e.g. `100kg × 10, 8, 6`.
-- **＋ Set** (one tap). The new set is pre-filled with your weight and **the reps you got on that same set last time**. Use − / + to adjust, or tap a box to type.
-- Under each set: `Last: 100 × 8` and how you compare (**+1** green, **−1** red, **=** same).
-- **⇄ Swap**: someone's on the machine? Pick a similar exercise (same muscle group) or any other.
-- **Skip**: marks the exercise as skipped (Un-skip to undo).
-- **✕** on a set removes it. **Remove** takes the exercise out of today's workout.
-- **Bodyweight exercises** (marked BW, e.g. Pull-up, Dips) ask for your morning bodyweight, which becomes the weight for every set, so you only log reps. Tap "Bodyweight today" to correct it.
+- A table of **WEIGHT · REPS · LOG**. Empty boxes show last week's numbers in grey as your target.
+  - Matched it? Just tap **LOG**: the grey numbers are recorded.
+  - Different? Type the new weight and/or reps, then tap **LOG**.
+  - Tap LOG again to un-log a set.
+- Under each set: `Last: 100 × 8` and, once logged, how you compare (**+1** green, **−1** red, **=** same).
+- **⋮ next to the exercise name**: Add set · Swap exercise (similar ones from the same muscle group first) · Skip / Un-skip · Change bodyweight · View history · Remove from workout.
+- **⋮ at the start of a set**: Add set below · Remove set.
+- **Bodyweight exercises** (marked BW, e.g. Pull-up, Dips) ask for your morning bodyweight the first time you log a set. That becomes the weight for every set, so you only log reps. Tap "Bodyweight @ … kg" to correct it.
 - A 💡 hint appears when set 1 reached 12+ reps last time, suggesting +2.5 kg. Change these numbers at the top of `js/progression.js`.
 
+Only **ticked (logged)** sets are saved as what you did. When you tap **Finish workout**, unticked sets are dropped, after a warning.
 Everything saves the moment you change it. Closing the app mid-workout loses nothing.
 Only log **working sets**. Warm-ups are deliberately not tracked.
 
