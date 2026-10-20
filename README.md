@@ -28,7 +28,7 @@ Its main job: **when you log a set, show exactly what you did on that set last t
   - Different? Type the new weight and/or reps, then tap **LOG**.
   - Tap LOG again to un-log a set.
 - Under each set: `Last: 100 × 8` and, once logged, how you compare (**+1** green, **−1** red, **=** same).
-- **⋮ next to the exercise name**: Add set · Swap exercise (similar ones from the same muscle group first) · Skip / Un-skip · Change bodyweight · View history · Remove from workout.
+- **⋮ next to the exercise name**: Add set · Change order (drag ≡ to move exercises; the screen follows your order exactly, so moving one away from its group gives it its own label) · Swap exercise (similar ones from the same muscle group first) · Skip / Un-skip · Change bodyweight · View history · Remove from workout.
 - **⋮ at the start of a set**: Add set below · Remove set.
 - **Bodyweight exercises** (marked BW, e.g. Pull-up, Dips) ask for your morning bodyweight the first time you log a set. That becomes the weight for every set, so you only log reps. Tap "Bodyweight @ … kg" to correct it.
 - A 💡 hint appears when set 1 reached 12+ reps last time, suggesting +2.5 kg. Change these numbers at the top of `js/progression.js`.

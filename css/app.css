@@ -206,6 +206,27 @@ label.check input { width: 24px; height: 24px; accent-color: var(--accent); }
 .menu-item:active { background: var(--border); }
 .menu-item.danger { color: var(--bad); }
 
+/* ---------- Change-order list (drag and drop) ---------- */
+
+.reorder { list-style: none; margin: 8px 0 0; padding: 0; }
+.reorder li {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 56px; padding: 0 10px 0 0; margin-bottom: 6px;
+  background: var(--card-2); border: 1px solid var(--border); border-radius: 10px;
+  user-select: none; -webkit-user-select: none;
+}
+.reorder li.dragging {
+  position: relative; z-index: 1;
+  border-color: var(--accent); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.reorder .grow { flex: 1; min-width: 0; font-weight: 600; }
+.reorder .handle {
+  width: 52px; align-self: stretch;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px; color: var(--muted); cursor: grab;
+  touch-action: none; /* stop the page scrolling while you drag */
+}
+
 /* ---------- History calendar ---------- */
 
 .cal-head { display: flex; align-items: center; gap: 4px; }

@@ -266,18 +266,33 @@ function renderSession(id) {
 }
 
 /**
- * Group a session's exercises by muscle group, in the order each group first
- * appears in the workout. Returns [{ name, indexes: [entry index, ...] }].
+ * Split a session's exercises into muscle-group sections, following the
+ * workout's order exactly: each run of neighbouring exercises from the same
+ * group is one section. Returns [{ name, indexes: [entry index, ...] }].
  */
 function groupEntries(s) {
   const groups = [];
   s.entries.forEach((entry, i) => {
     const name = exById(entry.exerciseId).group || 'Other';
-    let g = groups.find((x) => x.name === name);
-    if (!g) groups.push((g = { name, indexes: [] }));
-    g.indexes.push(i);
+    const last = groups[groups.length - 1];
+    if (last && last.name === name) last.indexes.push(i);
+    else groups.push({ name, indexes: [i] });
   });
   return groups;
+}
+
+/**
+ * Put exercises from the same muscle group next to each other (groups in the
+ * order they first appear; exercises keep their order within a group).
+ * Used when a workout starts, so it begins neatly grouped.
+ */
+function sortByGroup(entries) {
+  const first = {};
+  entries.forEach((e, i) => { const g = exById(e.exerciseId).group; if (!(g in first)) first[g] = i; });
+  return entries
+    .map((e, i) => ({ e, i, g: first[exById(e.exerciseId).group] }))
+    .sort((a, b) => a.g - b.g || a.i - b.i)
+    .map((x) => x.e);
 }
 
 /** One exercise inside a session: name, ⋮ menu, last time, hint, set table. */
@@ -709,6 +724,76 @@ function startSheet(planId, date) {
   });
 }
 
+/**
+ * "Change order" pop-up: drag the ≡ handle to move an exercise.
+ * Uses pointer events, so it works with a finger (iPhone/Android) and a mouse.
+ * Resolves to the new order as a list of the old entry indexes, or null if cancelled.
+ */
+function reorderSheet(s) {
+  return new Promise((resolve) => {
+    openSheet(`
+      <h2>Change order</h2>
+      <p class="muted small">Drag <b>≡</b> to move an exercise.</p>
+      <ul class="reorder" id="reorder">
+        ${s.entries.map((e, i) => {
+          const ex = exById(e.exerciseId);
+          return `<li data-i="${i}"><span class="handle" aria-label="Drag to move">≡</span>
+            <span class="grow">${esc(ex.name)}</span><span class="tag">${esc(ex.group)}</span></li>`;
+        }).join('')}
+      </ul>
+      <div class="row" style="margin-top:14px">
+        <button class="btn grow" data-x="cancel">Cancel</button>
+        <button class="btn primary grow" data-x="ok">Done</button>
+      </div>`, (el, close) => {
+      const list = el.querySelector('#reorder');
+      let drag = null; // { li, y } while dragging; y = pointer position the item's offset is measured from
+
+      list.addEventListener('pointerdown', (e) => {
+        const handle = e.target.closest('.handle');
+        if (!handle) return;
+        e.preventDefault();
+        handle.setPointerCapture(e.pointerId); // keep getting moves even if the finger leaves the handle
+        drag = { li: handle.closest('li'), y: e.clientY };
+        drag.li.classList.add('dragging');
+      });
+
+      list.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        const { li } = drag;
+        // Each time the item passes half of its neighbour, swap them in the list
+        // (repeat, so a fast flick past several items still lands in the right place).
+        const gap = 6; // matches .reorder li margin-bottom
+        for (;;) {
+          const dy = e.clientY - drag.y;
+          const next = li.nextElementSibling;
+          const prev = li.previousElementSibling;
+          if (next && dy > (next.offsetHeight + gap) / 2) {
+            list.insertBefore(next, li);
+            drag.y += next.offsetHeight + gap;
+          } else if (prev && dy < -(prev.offsetHeight + gap) / 2) {
+            list.insertBefore(li, prev);
+            drag.y -= prev.offsetHeight + gap;
+          } else break;
+        }
+        li.style.transform = `translateY(${e.clientY - drag.y}px)`;
+      });
+
+      const endDrag = () => {
+        if (!drag) return;
+        drag.li.style.transform = '';
+        drag.li.classList.remove('dragging');
+        drag = null;
+      };
+      list.addEventListener('pointerup', endDrag);
+      list.addEventListener('pointercancel', endDrag);
+
+      const done = (v) => { close(); resolve(v); };
+      el.querySelector('[data-x=cancel]').onclick = () => done(null);
+      el.querySelector('[data-x=ok]').onclick = () => done([...list.children].map((li) => Number(li.dataset.i)));
+    });
+  });
+}
+
 /** Timestamp for a workout on 'YYYY-MM-DD': now if it's today, otherwise midday that day. */
 function dateToStartedAt(date) {
   if (date === dayKey()) return new Date().toISOString();
@@ -741,10 +826,15 @@ const newEntry = (exerciseId) => ({
   sets: Array.from({ length: DEFAULT_SETS }, newSet),
 });
 
-/** Add an exercise to a session (asks bodyweight straight away for BW moves). */
+/**
+ * Add an exercise to a session (asks bodyweight straight away for BW moves).
+ * It goes after the last exercise of the same muscle group, or at the end.
+ */
 async function addEntry(s, ex) {
   const entry = newEntry(ex.id);
-  s.entries.push(entry);
+  let at = s.entries.length;
+  s.entries.forEach((e, i) => { if (exById(e.exerciseId).group === ex.group) at = i + 1; });
+  s.entries.splice(at, 0, entry);
   await ensureBodyweight(entry);
   await saveSession(s);
   rerender();
@@ -807,7 +897,7 @@ const actions = {
       routineId: plan?.id || null,
       startedAt: dateToStartedAt(choice.date),
       finishedAt: null,
-      entries: (plan?.exerciseIds || []).map(newEntry),
+      entries: sortByGroup((plan?.exerciseIds || []).map(newEntry)),
     };
     state.sessions.push(s);
     await saveSession(s);
@@ -820,6 +910,7 @@ const actions = {
     const ex = exById(entry.exerciseId);
     openMenu(el, [
       ...(entry.skipped ? [] : [{ label: '＋ Add set', run: () => actions['add-set'](el) }]),
+      ...(ctx(el).s.entries.length > 1 ? [{ label: '↕ Change order', run: () => actions.reorder(el) }] : []),
       { label: '⇄ Swap exercise', run: () => actions.swap(el) },
       entry.skipped
         ? { label: '↺ Un-skip exercise', run: () => actions.unskip(el) }
@@ -836,6 +927,17 @@ const actions = {
       { label: '＋ Add set below', run: () => actions['add-set'](el) },
       { label: '✕ Remove set', danger: true, run: () => actions['remove-set'](el) },
     ]);
+  },
+
+  /** Drag-and-drop reorder of the workout's exercises. */
+  async reorder(el) {
+    flushSave();
+    const { s } = ctx(el);
+    const order = await reorderSheet(s);
+    if (!order) return;
+    s.entries = order.map((i) => s.entries[i]);
+    await saveSession(s);
+    rerender();
   },
 
   /** Add an empty set (at the end, or below set j when called from a set's menu). */
