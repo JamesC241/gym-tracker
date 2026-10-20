@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <!-- viewport-fit=cover lets the app use the full iPhone screen; CSS adds safe-area padding. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Gym Tracker</title>
+  <meta name="description" content="Personal workout log. All data stays on this device.">
+  <meta name="theme-color" content="#0e1114">
+  <meta name="color-scheme" content="dark">
+
+  <!-- PWA: manifest + icons -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+
+  <!-- iPhone home-screen support -->
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Gym">
+
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <!-- Shown when a new version has been downloaded (see registerServiceWorker in app.js). -->
+  <div id="update-banner" hidden>
+    <span>New version ready</span>
+    <button id="update-btn" class="btn small primary">Update</button>
+  </div>
+
+  <!-- Each screen is rendered into here by app.js. -->
+  <main id="app" aria-live="polite"></main>
+
+  <!-- Bottom navigation (thumb-reachable). Links are hash routes handled in app.js. -->
+  <nav id="tabs">
+    <a href="#/" data-tab="home"><span class="ico">🏋️</span>Workout</a>
+    <a href="#/plans" data-tab="plans"><span class="ico">📋</span>Plans</a>
+    <a href="#/history" data-tab="history"><span class="ico">📅</span>History</a>
+    <a href="#/exercises" data-tab="exercises"><span class="ico">💪</span>Exercises</a>
+    <a href="#/backup" data-tab="backup"><span class="ico">💾</span>Backup</a>
+  </nav>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Never publish workout backups (they contain your personal data).
+*.json
+gym-tracker-backup-*
+
+# Local tooling config for Claude Code — not part of the app.
+.claude/
