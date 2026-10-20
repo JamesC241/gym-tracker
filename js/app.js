@@ -22,9 +22,17 @@ import { exportData, importData } from './backup.js';
 
 // Muscle groups, used for the dropdown grouping and for "swap for similar".
 // Safe to edit: add or rename groups here.
-const GROUPS = ['Chest', 'Back', 'Shoulders', 'Legs', 'Arms', 'Core', 'Other'];
+// If you rename a group, existing exercises keep the old name, so also update
+// them on the Exercises tab (or add a migration in migrateGroups below).
+const GROUPS = [
+  'Chest', 'Back', 'Shoulders',
+  'Quads', 'Hamstrings', 'Glutes', 'Calves',
+  'Biceps', 'Triceps', 'Forearms',
+  'Core', 'Other',
+];
 
-// Starter exercises created on first launch only. Edit/delete them in the app.
+// Starter exercises: [name, group, isBodyweight]. Added on first launch;
+// ones added in later versions are filled in by migrateGroups().
 const STARTER_EXERCISES = [
   ['Flat Bench Press', 'Chest'], ['Incline Bench Press', 'Chest'], ['Incline Dumbbell Press', 'Chest'],
   ['Dumbbell Bench Press', 'Chest'], ['Cable Fly', 'Chest'], ['Dips', 'Chest', true],
@@ -32,9 +40,13 @@ const STARTER_EXERCISES = [
   ['Barbell Row', 'Back'], ['Seated Cable Row', 'Back'], ['Chest-Supported Row', 'Back'], ['Deadlift', 'Back'],
   ['Overhead Press', 'Shoulders'], ['Dumbbell Shoulder Press', 'Shoulders'], ['Lateral Raise', 'Shoulders'],
   ['Rear Delt Fly', 'Shoulders'],
-  ['Squat', 'Legs'], ['Hack Squat', 'Legs'], ['Leg Press', 'Legs'], ['Romanian Deadlift', 'Legs'],
-  ['Leg Curl', 'Legs'], ['Leg Extension', 'Legs'], ['Calf Raise', 'Legs'],
-  ['Barbell Curl', 'Arms'], ['Dumbbell Curl', 'Arms'], ['Tricep Pushdown', 'Arms'], ['Skull Crusher', 'Arms'],
+  ['Squat', 'Quads'], ['Hack Squat', 'Quads'], ['Leg Press', 'Quads'], ['Leg Extension', 'Quads'],
+  ['Romanian Deadlift', 'Hamstrings'], ['Leg Curl', 'Hamstrings'],
+  ['Hip Thrust', 'Glutes'], ['Cable Glute Kickback', 'Glutes'],
+  ['Calf Raise', 'Calves'],
+  ['Barbell Curl', 'Biceps'], ['Dumbbell Curl', 'Biceps'], ['Hammer Curl', 'Biceps'],
+  ['Tricep Pushdown', 'Triceps'], ['Skull Crusher', 'Triceps'], ['Overhead Tricep Extension', 'Triceps'],
+  ['Wrist Curl', 'Forearms'], ['Reverse Curl', 'Forearms'],
   ['Hanging Leg Raise', 'Core', true], ['Cable Crunch', 'Core'],
 ];
 
@@ -236,7 +248,7 @@ function renderSession(id) {
     <p class="muted small" style="margin-top:-8px">${fmtDate(s.startedAt)}</p>
     ${groupEntries(s).map((g) => `
       <section class="group">
-        <div class="group-label"><span class="bars" aria-hidden="true"></span>${esc(g.name)}</div>
+        <div class="group-label">${esc(g.name)}</div>
         ${g.indexes.map((i) => entryCard(s, s.entries[i], i)).join('')}
       </section>`).join('') ||
       '<p class="muted">No exercises yet — add one below.</p>'}
@@ -387,25 +399,73 @@ function renderPlanEdit(id) {
     </div>`;
 }
 
-/* ----- History ----- */
+/* ----- History: month calendar ----- */
+
+// Which month is showing and which day is selected. Kept in memory so that
+// going into a workout and back returns you to the same place.
+let calMonth = null; // Date: 1st of the month on screen
+let calDay = dayKey(); // 'YYYY-MM-DD'
+
+const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']; // weeks start on Monday
+
 function renderHistory() {
-  const list = sessionsNewestFirst();
+  if (!calMonth) calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const y = calMonth.getFullYear(), m = calMonth.getMonth();
+
+  // Workouts by day, e.g. { '2026-10-20': [session, ...] }
+  const byDay = {};
+  for (const s of state.sessions) (byDay[dayKey(new Date(s.startedAt))] ||= []).push(s);
+
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const blanks = (new Date(y, m, 1).getDay() + 6) % 7; // Monday = 0
+  const today = dayKey();
+  const monthCount = Object.keys(byDay).filter((k) => k.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`))
+    .reduce((n, k) => n + byDay[k].length, 0);
+
+  const cells = [];
+  for (let i = 0; i < blanks; i++) cells.push('<span></span>');
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = dayKey(new Date(y, m, d));
+    const cls = [key === today && 'today', key === calDay && 'selected', byDay[key] && 'has'].filter(Boolean).join(' ');
+    cells.push(`<button class="cal-day ${cls}" data-action="cal-day" data-day="${key}" aria-label="${fmtDate(key + 'T12:00')}${byDay[key] ? ', workout' : ''}">
+      <span class="num">${d}</span><span class="dot"></span></button>`);
+  }
+
+  const daySessions = (byDay[calDay] || []).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const dayTitle = new Date(calDay + 'T12:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
   return `
-    <h1>History</h1>
-    <div class="card">
-      ${list.map((s) => {
-        const done = s.entries.filter((e) => !e.skipped && doneSets(e).length);
-        const sets = done.reduce((n, e) => n + doneSets(e).length, 0);
-        return `
-          <a class="list-item list-link" href="#/session/${s.id}">
-            <span class="grow">
-              <b>${fmtDate(s.startedAt)}</b> · ${esc(s.name)} ${s.finishedAt ? '' : '<span class="tag accent">LIVE</span>'}<br>
-              <span class="muted small">${done.map((e) => esc(exById(e.exerciseId).name)).join(', ') || 'No sets'} · ${sets} set${sets === 1 ? '' : 's'}</span>
-            </span>
-            <span class="muted">›</span>
-          </a>`;
-      }).join('') || '<p class="muted">No workouts yet.</p>'}
-    </div>`;
+    <div class="cal-head">
+      <h1>${calMonth.toLocaleDateString('en-GB', { month: 'long' })} <span class="muted">${y}</span></h1>
+      <button class="btn small" data-action="cal-today">Today</button>
+      <button class="icon-btn" data-action="cal-month" data-dir="-1" aria-label="Previous month">‹</button>
+      <button class="icon-btn" data-action="cal-month" data-dir="1" aria-label="Next month">›</button>
+    </div>
+    <p class="muted small" style="margin-top:-8px">${monthCount} workout${monthCount === 1 ? '' : 's'} this month</p>
+    <div class="cal" id="cal">
+      ${WEEKDAYS.map((w) => `<span class="cal-wd">${w}</span>`).join('')}
+      ${cells.join('')}
+    </div>
+    <h2>${dayTitle}</h2>
+    ${daySessions.map((s) => sessionSummary(s)).join('') || `
+      <p class="muted">No workout on this day.</p>
+      ${calDay <= today ? `<button class="btn block" data-action="start" data-date="${calDay}">＋ Log a workout on this day</button>` : ''}`}`;
+}
+
+/** A finished/live workout as a card: name, then each exercise with its sets. */
+function sessionSummary(s) {
+  const lines = s.entries.map((e) => {
+    const ex = exById(e.exerciseId);
+    const sets = doneSets(e);
+    if (e.skipped) return `<div class="sum-line muted"><span>${esc(ex.name)}</span><span>skipped</span></div>`;
+    if (!sets.length) return '';
+    return `<div class="sum-line"><span>${esc(ex.name)}</span><span class="muted">${esc(formatSets(sets, ex.bodyweight))}</span></div>`;
+  }).join('');
+  return `
+    <a class="card list-link" href="#/session/${s.id}">
+      <div class="row"><b class="grow">${esc(s.name)}</b>${s.finishedAt ? '' : '<span class="tag accent">LIVE</span>'}<span class="muted">›</span></div>
+      ${lines || '<p class="muted small">No sets logged.</p>'}
+    </a>`;
 }
 
 /* ----- Exercises list ----- */
@@ -610,6 +670,52 @@ function swapSheet(currentEx, inSession) {
   });
 }
 
+/**
+ * "Start workout" pop-up: pick the plan (pre-selected) and the date it counts for.
+ * Resolves to { planId, date: 'YYYY-MM-DD' }, or null if cancelled.
+ */
+function startSheet(planId, date) {
+  return new Promise((resolve) => {
+    const plans = [...state.routines].sort((a, b) => a.name.localeCompare(b.name));
+    const today = dayKey();
+    const yesterday = dayKey(new Date(Date.now() - 86400000));
+    openSheet(`
+      <h2>Start workout</h2>
+      <label class="field-label">Plan</label>
+      <select id="start-plan">
+        ${plans.map((p) => `<option value="${p.id}" ${p.id === planId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        <option value="" ${planId ? '' : 'selected'}>Empty workout</option>
+      </select>
+      <label class="field-label">Date</label>
+      <input type="date" id="start-date" value="${date}" max="${today}">
+      <div class="row" style="margin-top:8px">
+        <button class="btn small" data-x="today">Today</button>
+        <button class="btn small" data-x="yesterday">Yesterday</button>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn grow" data-x="cancel">Cancel</button>
+        <button class="btn primary grow" data-x="ok">Start</button>
+      </div>`, (el, close) => {
+      const dateInput = el.querySelector('#start-date');
+      const done = (v) => { close(); resolve(v); };
+      el.querySelector('[data-x=today]').onclick = () => { dateInput.value = today; };
+      el.querySelector('[data-x=yesterday]').onclick = () => { dateInput.value = yesterday; };
+      el.querySelector('[data-x=cancel]').onclick = () => done(null);
+      el.querySelector('[data-x=ok]').onclick = () => done({
+        planId: el.querySelector('#start-plan').value,
+        date: dateInput.value || today,
+      });
+    });
+  });
+}
+
+/** Timestamp for a workout on 'YYYY-MM-DD': now if it's today, otherwise midday that day. */
+function dateToStartedAt(date) {
+  if (date === dayKey()) return new Date().toISOString();
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, m - 1, d, 12, 0, 0).toISOString();
+}
+
 /* ===================== 6. Actions (button handlers) ===================== */
 
 /** Look up the session and entry referenced by a button's data-s / data-e. */
@@ -665,10 +771,15 @@ function openMenu(anchor, items) {
     items[Number(b.dataset.k)].run();
   });
   document.body.append(backdrop, menu);
-  // Line the menu up under the ⋮ button; flip it upwards if it would go off the bottom.
+  // Line the menu up with the ⋮ button, always fully on screen:
+  // it opens towards the middle of the screen (leftwards from a button on the
+  // right, rightwards from a button on the left), and upwards if near the bottom.
   const r = anchor.getBoundingClientRect();
   const navH = document.getElementById('tabs').offsetHeight;
-  menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  const w = menu.offsetWidth;
+  let left = r.left + r.width / 2 > window.innerWidth / 2 ? r.right - w : r.left;
+  left = Math.min(Math.max(8, left), window.innerWidth - w - 8);
+  menu.style.left = `${left}px`;
   let top = r.bottom + 4;
   if (top + menu.offsetHeight > window.innerHeight - navH - 8) top = Math.max(8, r.top - menu.offsetHeight - 4);
   menu.style.top = `${top}px`;
@@ -676,7 +787,10 @@ function openMenu(anchor, items) {
 
 const actions = {
   /* --- Workouts --- */
+  /** Start a workout: asks which date it's for (and which plan, from the calendar). */
   async start(el) {
+    const choice = await startSheet(el.dataset.plan || '', el.dataset.date || dayKey());
+    if (!choice) return;
     const live = activeSession();
     if (live) {
       if (!confirm(`You have a workout in progress (${live.name}). Finish it and start a new one?`)) {
@@ -686,12 +800,12 @@ const actions = {
       live.finishedAt = new Date().toISOString();
       await saveSession(live);
     }
-    const plan = state.routines.find((r) => r.id === el.dataset.plan);
+    const plan = state.routines.find((r) => r.id === choice.planId);
     const s = {
       id: db.newId(),
       name: plan ? plan.name : 'Workout',
       routineId: plan?.id || null,
-      startedAt: new Date().toISOString(),
+      startedAt: dateToStartedAt(choice.date),
       finishedAt: null,
       entries: (plan?.exerciseIds || []).map(newEntry),
     };
@@ -853,6 +967,24 @@ const actions = {
     state.sessions = state.sessions.filter((x) => x.id !== s.id);
     await db.del('sessions', s.id);
     location.hash = '#/history';
+  },
+
+  /* --- History calendar --- */
+  'cal-day'(el) {
+    calDay = el.dataset.day;
+    rerender();
+  },
+
+  'cal-month'(el) {
+    calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + Number(el.dataset.dir), 1);
+    rerender();
+  },
+
+  'cal-today'() {
+    const now = new Date();
+    calMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    calDay = dayKey(now);
+    rerender();
   },
 
   /* --- Plans --- */
@@ -1020,6 +1152,7 @@ document.addEventListener('change', async (e) => {
     try {
       const r = await importData(file);
       await loadState();
+      await migrateGroups(); // older backups may use the old muscle groups
       alert(`Restored ${r.exercises} exercises and ${r.sessions} workouts.`);
       location.hash = '#/';
       render();
@@ -1028,6 +1161,21 @@ document.addEventListener('change', async (e) => {
     }
   }
 });
+
+// Swipe left/right on the calendar to change month.
+let swipeStart = null;
+document.addEventListener('touchstart', (e) => {
+  swipeStart = e.target.closest('#cal') ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+document.addEventListener('touchend', (e) => {
+  if (!swipeStart) return;
+  const dx = e.changedTouches[0].clientX - swipeStart.x;
+  const dy = e.changedTouches[0].clientY - swipeStart.y;
+  swipeStart = null;
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    actions['cal-month']({ dataset: { dir: dx < 0 ? '1' : '-1' } });
+  }
+}, { passive: true });
 
 // Save any half-typed numbers if the app is closed or put in the background.
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
@@ -1052,8 +1200,35 @@ async function seedIfEmpty() {
       state.exercises.push(ex);
       await db.put('exercises', ex);
     }
+    await setMeta('groupsVersion', GROUPS_VERSION); // already uses the current groups
   }
   await setMeta('seeded', true);
+}
+
+/**
+ * One-off upgrade of existing data when the muscle groups change.
+ * v2: "Legs" → Quads / Hamstrings / Glutes / Calves, "Arms" → Biceps / Triceps / Forearms.
+ * Starter exercises go to their new group by name; your own exercises go to
+ * Quads (from Legs) or Biceps (from Arms). Change them on the Exercises tab if needed.
+ * Also adds the new starter exercises, unless you already have one with that name.
+ */
+const GROUPS_VERSION = 2;
+async function migrateGroups() {
+  if ((state.meta.groupsVersion || 1) >= GROUPS_VERSION) return;
+  const starterGroup = Object.fromEntries(STARTER_EXERCISES.map(([name, group]) => [name.toLowerCase(), group]));
+  for (const ex of state.exercises) {
+    if (GROUPS.includes(ex.group)) continue;
+    ex.group = starterGroup[ex.name.toLowerCase()] || { Legs: 'Quads', Arms: 'Biceps' }[ex.group] || 'Other';
+    await db.put('exercises', ex);
+  }
+  const have = new Set(state.exercises.map((e) => e.name.toLowerCase())); // includes deleted ones
+  for (const [name, group, bodyweight = false] of STARTER_EXERCISES) {
+    if (have.has(name.toLowerCase())) continue;
+    const ex = { id: db.newId(), name, group, bodyweight };
+    state.exercises.push(ex);
+    await db.put('exercises', ex);
+  }
+  await setMeta('groupsVersion', GROUPS_VERSION);
 }
 
 /** Ask the browser not to clear our storage when space runs low. */
@@ -1111,6 +1286,7 @@ window.addEventListener('hashchange', () => { flushSave(); render(); });
   try {
     await loadState();
     await seedIfEmpty();
+    await migrateGroups();
   } catch (err) {
     $app.innerHTML = `<h1>Storage problem</h1><p>${esc(err.message)}</p><p class="muted">Private browsing can block storage.</p>`;
     return;

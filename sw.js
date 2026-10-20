@@ -10,7 +10,7 @@
  * If you add a new file to the app, also add it to ASSETS.
  */
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const CACHE = `gym-tracker-v${VERSION}`;
 
 const ASSETS = [

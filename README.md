@@ -13,11 +13,13 @@ Its main job: **when you log a set, show exactly what you did on that set last t
 
 | Tab | What it's for |
 |---|---|
-| **Workout** | Start a workout from one of your plans (or an empty one). Resume one in progress. |
+| **Workout** | Start a workout from one of your plans (or an empty one). You're asked which date it's for (today by default). Resume one in progress. |
 | **Plans** | Build workouts in advance (e.g. Push, Pull, Legs): pick exercises from the dropdown and order them. |
-| **History** | Every past workout. Tap one to view or edit it. |
+| **History** | A month calendar. Days with a workout have a dot. Change month with ‹ › or by swiping; **Today** jumps back. Tap a day to see what you did (each exercise and its sets); tap the workout to open or edit it. On an empty day you can log a workout for that date. |
 | **Exercises** | Add, rename or delete exercises, set their muscle group, and mark bodyweight ones. Tap an exercise to see its progress chart. |
 | **Backup** | Export / Import your data. |
+
+**Muscle groups:** Chest, Back, Shoulders, Quads, Hamstrings, Glutes, Calves, Biceps, Triceps, Forearms, Core, Other (edit `GROUPS` in `js/app.js`).
 
 **During a workout**, exercises are grouped by muscle group (BACK, CHEST, …), with a gap between groups. Each exercise starts with **3 sets** (change `DEFAULT_SETS` in `js/app.js`) and shows:
 - **Last time**: every working set from your previous session of that exercise, e.g. `100kg × 10, 8, 6`.
