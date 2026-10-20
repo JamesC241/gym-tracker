@@ -39,6 +39,7 @@ const STARTER_EXERCISES = [
 ];
 
 const BACKUP_REMINDER_DAYS = 14;
+const DEFAULT_SETS = 3; // empty sets each exercise starts with in a new workout
 
 // Everything in memory. Arrays mirror the IndexedDB stores; meta is a key→value map.
 const state = { exercises: [], routines: [], sessions: [], meta: {} };
@@ -112,16 +113,38 @@ function flushSave() {
 }
 
 /**
+ * A set only counts once you've ticked LOG (done: true). Sets saved before the
+ * LOG box existed have no `done` field, so they count as done.
+ */
+const isDone = (set) => set.done !== false;
+const doneSets = (entry) => entry.sets.filter(isDone);
+const newSet = () => ({ kg: null, reps: null, done: false });
+
+/**
  * The most recent earlier session where this exercise was actually done
- * (not skipped, at least one set). Returns { session, entry } or null.
+ * (not skipped, at least one logged set). Returns { session, entry, sets } or null.
  */
 function lastTimeFor(exerciseId, currentSession) {
   for (const s of sessionsNewestFirst()) {
     if (currentSession && (s.id === currentSession.id || s.startedAt > currentSession.startedAt)) continue;
-    const entry = s.entries.find((e) => e.exerciseId === exerciseId && !e.skipped && e.sets.length);
-    if (entry) return { session: s, entry };
+    const entry = s.entries.find((e) => e.exerciseId === exerciseId && !e.skipped && doneSets(e).length);
+    if (entry) return { session: s, entry, sets: doneSets(entry) };
   }
   return null;
+}
+
+/**
+ * The grey "target" numbers shown in an empty set: what to aim for.
+ *  weight → bodyweight for BW moves; otherwise the weight you've used on the
+ *           previous set today, else last time's weight for this set.
+ *  reps   → the reps you got on this same set last time.
+ */
+function targetFor(entry, j, lastSets, ex) {
+  let kg;
+  if (ex.bodyweight) kg = entry.bodyweight;
+  else if (j > 0) kg = entry.sets[j - 1].kg ?? lastSets[j]?.kg ?? targetFor(entry, j - 1, lastSets, ex).kg;
+  else kg = lastSets[0]?.kg;
+  return { kg: kg ?? null, reps: lastSets[j]?.reps ?? null };
 }
 
 /** "100kg × 10, 8, 6" when the weight is the same, else "60kg × 8, 57.5kg × 6". */
@@ -211,7 +234,11 @@ function renderSession(id) {
       ${s.finishedAt ? '<span class="tag">PAST</span>' : ''}
     </div>
     <p class="muted small" style="margin-top:-8px">${fmtDate(s.startedAt)}</p>
-    ${s.entries.map((entry, i) => entryCard(s, entry, i)).join('') ||
+    ${groupEntries(s).map((g) => `
+      <section class="group">
+        <div class="group-label"><span class="bars" aria-hidden="true"></span>${esc(g.name)}</div>
+        ${g.indexes.map((i) => entryCard(s, s.entries[i], i)).join('')}
+      </section>`).join('') ||
       '<p class="muted">No exercises yet — add one below.</p>'}
     <div class="card">
       <label class="field-label" style="margin-top:0">Add an exercise</label>
@@ -226,72 +253,76 @@ function renderSession(id) {
     </div>`;
 }
 
-/** One exercise inside a session: last time, hint, sets, buttons. */
+/**
+ * Group a session's exercises by muscle group, in the order each group first
+ * appears in the workout. Returns [{ name, indexes: [entry index, ...] }].
+ */
+function groupEntries(s) {
+  const groups = [];
+  s.entries.forEach((entry, i) => {
+    const name = exById(entry.exerciseId).group || 'Other';
+    let g = groups.find((x) => x.name === name);
+    if (!g) groups.push((g = { name, indexes: [] }));
+    g.indexes.push(i);
+  });
+  return groups;
+}
+
+/** One exercise inside a session: name, ⋮ menu, last time, hint, set table. */
 function entryCard(s, entry, i) {
   const ex = exById(entry.exerciseId);
   const last = lastTimeFor(entry.exerciseId, s);
-  const lastSets = last?.entry.sets || [];
+  const lastSets = last?.sets || [];
   const hint = entry.skipped ? null : progressionHint(ex, lastSets);
-  const nextN = entry.sets.length;
-  const nextLast = lastSets[nextN];
   const d = `data-s="${s.id}" data-e="${i}"`;
 
   return `
-    <section class="card ${entry.skipped ? 'skipped' : ''}">
+    <div class="ex ${entry.skipped ? 'skipped' : ''}">
       <div class="ex-head">
-        <a class="ex-name" href="#/exercise/${ex.id}">${esc(ex.name)}</a>
-        ${ex.bodyweight ? '<span class="tag">BW</span>' : ''}
+        <div class="grow">
+          <a class="ex-name" href="#/exercise/${ex.id}">${esc(ex.name)}</a>
+          <div class="ex-sub">
+            ${ex.bodyweight
+              ? `<button class="link-btn" data-action="change-bw" ${d}>Bodyweight @ <u>${entry.bodyweight != null ? `${fmtKg(entry.bodyweight)} kg` : 'set weight'}</u></button>`
+              : esc(ex.group)}
+            ${entry.swappedFrom ? ` · swapped from ${esc(exById(entry.swappedFrom).name)}` : ''}
+          </div>
+        </div>
+        <button class="icon-btn" data-action="ex-menu" ${d} aria-label="Exercise options">⋮</button>
       </div>
-      ${entry.swappedFrom ? `<p class="muted small" style="margin:2px 0 0">Swapped from ${esc(exById(entry.swappedFrom).name)}</p>` : ''}
       <p class="last-time">${last
         ? `Last time · ${fmtDate(last.session.startedAt)}: <b>${esc(formatSets(lastSets, ex.bodyweight))}</b>`
         : 'First time — no previous sets'}</p>
       ${hint ? `<p class="hint">💡 ${esc(hint)}</p>` : ''}
-      ${entry.skipped ? `
-        <div class="ex-actions"><button class="btn small" data-action="unskip" ${d}>Un-skip</button></div>
-      ` : `
-        ${ex.bodyweight && entry.bodyweight != null ? `
-          <button class="bw-chip" data-action="change-bw" ${d}>
-            <span>Bodyweight today: <b>${fmtKg(entry.bodyweight)} kg</b></span><span class="muted small">change</span>
-          </button>` : ''}
-        <div class="sets">${entry.sets.length ? `<div class="set set-header"><span class="set-n">Set</span><span class="set-kg">${ex.bodyweight ? 'Bodyweight' : 'kg'}</span><span class="set-reps">Reps</span></div>` : ''}${entry.sets.map((set, j) => setRow(s, entry, i, j, ex, lastSets[j])).join('')}</div>
-        <button class="btn primary block add-set" data-action="add-set" ${d}>
-          ＋ Set ${nextN + 1}${nextLast ? ` <span style="font-weight:400">· last ${fmtKg(nextLast.kg)} × ${nextLast.reps}</span>` : ''}
-        </button>
-        <div class="ex-actions">
-          <button class="btn small" data-action="swap" ${d}>⇄ Swap</button>
-          <button class="btn small" data-action="skip" ${d}>Skip</button>
-          <button class="btn small ghost danger" data-action="remove-entry" ${d}>Remove</button>
-        </div>
-      `}
-    </section>`;
-}
-
-/** One set row: weight, reps with − / +, comparison with last time, delete. */
-function setRow(s, entry, i, j, ex, lastSet) {
-  const set = entry.sets[j];
-  const d = `data-s="${s.id}" data-e="${i}" data-j="${j}"`;
-  return `
-    <div class="set">
-      <span class="set-n">${j + 1}</span>
-      <span class="set-kg">
-        ${ex.bodyweight
-          ? `<span class="bw-kg">${fmtKg(set.kg)}</span><span class="unit">kg</span>`
-          : `<input type="text" inputmode="decimal" autocomplete="off" aria-label="Weight in kg" data-field="kg" ${d} value="${fmtKg(set.kg)}">`}
-      </span>
-      <span class="set-reps">
-        <button class="btn" data-action="reps" data-delta="-1" ${d} aria-label="One less rep">−</button>
-        <input type="text" inputmode="numeric" autocomplete="off" aria-label="Reps" data-field="reps" ${d} value="${set.reps ?? ''}">
-        <button class="btn" data-action="reps" data-delta="1" ${d} aria-label="One more rep">+</button>
-      </span>
-      <span class="set-x"><button class="btn ghost" data-action="remove-set" ${d} aria-label="Remove set">✕</button></span>
-      <span class="set-last" id="cmp-${s.id}-${i}-${j}">${compareHtml(set, lastSet, ex.bodyweight)}</span>
+      ${entry.skipped ? '<p class="muted small">Skipped — use ⋮ to un-skip.</p>' : entry.sets.length ? `
+        <div class="set set-header"><span></span><span>WEIGHT</span><span>REPS</span><span>LOG</span></div>
+        ${entry.sets.map((set, j) => setRow(s, entry, i, j, ex, lastSets)).join('')}
+      ` : '<p class="muted small">No sets — use ⋮ → Add set.</p>'}
     </div>`;
 }
 
+/** One set row: ⋮ menu, weight, reps, LOG tick; "Last: …" underneath. */
+function setRow(s, entry, i, j, ex, lastSets) {
+  const set = entry.sets[j];
+  const done = isDone(set);
+  const t = targetFor(entry, j, lastSets, ex);
+  const d = `data-s="${s.id}" data-e="${i}" data-j="${j}"`;
+  return `
+    <div class="set ${done ? 'done' : ''}">
+      <button class="icon-btn small" data-action="set-menu" ${d} aria-label="Set ${j + 1} options">⋮</button>
+      ${ex.bodyweight
+        ? `<span class="cell static">${entry.bodyweight != null ? fmtKg(entry.bodyweight) : 'BW'}</span>`
+        : `<input class="cell" type="text" inputmode="decimal" autocomplete="off" aria-label="Set ${j + 1} weight in kg" data-field="kg" ${d} value="${fmtKg(set.kg)}" placeholder="${t.kg != null ? fmtKg(t.kg) : 'kg'}">`}
+      <input class="cell" type="text" inputmode="numeric" autocomplete="off" aria-label="Set ${j + 1} reps" data-field="reps" ${d} value="${set.reps ?? ''}" placeholder="${t.reps ?? 'reps'}">
+      <button class="log-box" data-action="log" ${d} aria-label="Log set ${j + 1}" aria-pressed="${done}">${done ? '✓' : ''}</button>
+      <span class="set-last" id="cmp-${s.id}-${i}-${j}">${compareHtml(set, lastSets[j], ex.bodyweight)}</span>
+    </div>`;
+}
+
+/** "Last: 100 × 10  +1" — the comparison only shows once the set is logged. */
 function compareHtml(set, lastSet, isBodyweight) {
   if (!lastSet) return '';
-  const c = compareSet(set, lastSet, isBodyweight);
+  const c = isDone(set) ? compareSet(set, lastSet, isBodyweight) : null;
   return `Last: ${fmtKg(lastSet.kg)} × ${lastSet.reps}${c ? `<span class="cmp ${c.cls}">${c.label}</span>` : ''}`;
 }
 
@@ -363,8 +394,8 @@ function renderHistory() {
     <h1>History</h1>
     <div class="card">
       ${list.map((s) => {
-        const done = s.entries.filter((e) => !e.skipped && e.sets.length);
-        const sets = done.reduce((n, e) => n + e.sets.length, 0);
+        const done = s.entries.filter((e) => !e.skipped && doneSets(e).length);
+        const sets = done.reduce((n, e) => n + doneSets(e).length, 0);
         return `
           <a class="list-item list-link" href="#/session/${s.id}">
             <span class="grow">
@@ -404,7 +435,9 @@ function renderExerciseProgress(id) {
   // Every session where this exercise was done, oldest first.
   const rows = [...state.sessions]
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-    .flatMap((s) => s.entries.filter((e) => e.exerciseId === id && !e.skipped && e.sets.length).map((e) => ({ s, e })));
+    .flatMap((s) => s.entries
+      .filter((e) => e.exerciseId === id && !e.skipped && doneSets(e).length)
+      .map((e) => ({ s, e: { ...e, sets: doneSets(e) } })));
 
   // Chart value per session: best reps for bodyweight moves, best estimated 1RM otherwise.
   const points = rows.map(({ s, e }) => ({
@@ -596,13 +629,49 @@ async function ensureBodyweight(entry) {
   return true;
 }
 
+/** A fresh exercise in a workout, with DEFAULT_SETS empty sets ready to log. */
+const newEntry = (exerciseId) => ({
+  exerciseId, skipped: false, bodyweight: null,
+  sets: Array.from({ length: DEFAULT_SETS }, newSet),
+});
+
 /** Add an exercise to a session (asks bodyweight straight away for BW moves). */
 async function addEntry(s, ex) {
-  const entry = { exerciseId: ex.id, skipped: false, bodyweight: null, sets: [] };
+  const entry = newEntry(ex.id);
   s.entries.push(entry);
   await ensureBodyweight(entry);
   await saveSession(s);
   rerender();
+}
+
+/**
+ * Small drop-down menu next to a ⋮ button.
+ * items: [{ label, run, danger? }] — run() is called when the item is tapped.
+ */
+function openMenu(anchor, items) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'menu-backdrop';
+  const menu = document.createElement('div');
+  menu.className = 'menu';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = items.map((it, k) =>
+    `<button class="menu-item ${it.danger ? 'danger' : ''}" role="menuitem" data-k="${k}">${esc(it.label)}</button>`).join('');
+  const close = () => { backdrop.remove(); menu.remove(); };
+  backdrop.addEventListener('click', close);
+  menu.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-k]');
+    if (!b) return;
+    close();
+    items[Number(b.dataset.k)].run();
+  });
+  document.body.append(backdrop, menu);
+  // Line the menu up under the ⋮ button; flip it upwards if it would go off the bottom.
+  const r = anchor.getBoundingClientRect();
+  const navH = document.getElementById('tabs').offsetHeight;
+  menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  let top = r.bottom + 4;
+  if (top + menu.offsetHeight > window.innerHeight - navH - 8) top = Math.max(8, r.top - menu.offsetHeight - 4);
+  menu.style.top = `${top}px`;
 }
 
 const actions = {
@@ -624,27 +693,42 @@ const actions = {
       routineId: plan?.id || null,
       startedAt: new Date().toISOString(),
       finishedAt: null,
-      entries: (plan?.exerciseIds || []).map((exerciseId) => ({ exerciseId, skipped: false, bodyweight: null, sets: [] })),
+      entries: (plan?.exerciseIds || []).map(newEntry),
     };
     state.sessions.push(s);
     await saveSession(s);
     location.hash = `#/session/${s.id}`;
   },
 
+  /* ⋮ next to an exercise name */
+  'ex-menu'(el) {
+    const { entry } = ctx(el);
+    const ex = exById(entry.exerciseId);
+    openMenu(el, [
+      ...(entry.skipped ? [] : [{ label: '＋ Add set', run: () => actions['add-set'](el) }]),
+      { label: '⇄ Swap exercise', run: () => actions.swap(el) },
+      entry.skipped
+        ? { label: '↺ Un-skip exercise', run: () => actions.unskip(el) }
+        : { label: '⤼ Skip exercise', run: () => actions.skip(el) },
+      ...(ex.bodyweight ? [{ label: '⚖ Change bodyweight', run: () => actions['change-bw'](el) }] : []),
+      { label: '📈 View history', run: () => { location.hash = `#/exercise/${ex.id}`; } },
+      { label: '✕ Remove from workout', danger: true, run: () => actions['remove-entry'](el) },
+    ]);
+  },
+
+  /* ⋮ at the start of a set row */
+  'set-menu'(el) {
+    openMenu(el, [
+      { label: '＋ Add set below', run: () => actions['add-set'](el) },
+      { label: '✕ Remove set', danger: true, run: () => actions['remove-set'](el) },
+    ]);
+  },
+
+  /** Add an empty set (at the end, or below set j when called from a set's menu). */
   async 'add-set'(el) {
     const { s, entry } = ctx(el);
-    if (!(await ensureBodyweight(entry))) return;
-    const ex = exById(entry.exerciseId);
-    const prev = entry.sets[entry.sets.length - 1];
-    const lastSets = lastTimeFor(entry.exerciseId, s)?.entry.sets || [];
-    const lastSame = lastSets[entry.sets.length];
-    // Pre-fill: weight = previous set today (or set 1 last time);
-    //           reps   = what you did on this same set last time (the number to beat),
-    //                    else the previous set today.
-    entry.sets.push({
-      kg: ex.bodyweight ? entry.bodyweight : (prev?.kg ?? lastSets[0]?.kg ?? null),
-      reps: lastSame?.reps ?? prev?.reps ?? null,
-    });
+    const at = el.dataset.j != null ? Number(el.dataset.j) + 1 : entry.sets.length;
+    entry.sets.splice(at, 0, newSet());
     await saveSession(s);
     rerender();
   },
@@ -656,13 +740,34 @@ const actions = {
     rerender();
   },
 
-  async reps(el) {
-    const { s, set } = ctx(el);
-    set.reps = Math.max(0, (set.reps ?? 0) + Number(el.dataset.delta));
-    const input = el.parentElement.querySelector('input');
-    input.value = set.reps;
-    refreshCompare(el);
-    saveSessionSoon(s);
+  /**
+   * LOG tick box. Ticking a set records it; any box left empty takes the grey
+   * target number (so if you matched last week, it's one tap). Tap again to un-log.
+   */
+  async log(el) {
+    flushSave();
+    const { s, entry, set } = ctx(el);
+    if (isDone(set)) {
+      set.done = false;
+    } else {
+      if (!(await ensureBodyweight(entry))) return;
+      const ex = exById(entry.exerciseId);
+      const lastSets = lastTimeFor(entry.exerciseId, s)?.sets || [];
+      const j = Number(el.dataset.j);
+      const t = targetFor(entry, j, lastSets, ex);
+      set.kg = ex.bodyweight ? entry.bodyweight : (set.kg ?? t.kg);
+      set.reps = set.reps ?? t.reps;
+      if (set.kg == null || set.reps == null) {
+        rerender();
+        const field = set.kg == null ? 'kg' : 'reps';
+        document.querySelector(`[data-field="${field}"][data-s="${s.id}"][data-e="${el.dataset.e}"][data-j="${j}"]`)?.focus();
+        toast(`Enter the ${field === 'kg' ? 'weight' : 'reps'} first`);
+        return;
+      }
+      set.done = true;
+    }
+    await saveSession(s);
+    rerender();
   },
 
   async 'change-bw'(el) {
@@ -677,7 +782,7 @@ const actions = {
 
   async skip(el) {
     const { s, entry } = ctx(el);
-    if (entry.sets.length && !confirm('Skip this exercise? Its logged sets will be kept but not counted.')) return;
+    if (doneSets(entry).length && !confirm('Skip this exercise? Its logged sets will be kept but not counted.')) return;
     entry.skipped = true;
     await saveSession(s);
     rerender();
@@ -692,7 +797,8 @@ const actions = {
 
   async 'remove-entry'(el) {
     const { s, entry } = ctx(el);
-    if (entry.sets.length && !confirm(`Remove ${exById(entry.exerciseId).name} and its ${entry.sets.length} set(s) from this workout?`)) return;
+    const n = doneSets(entry).length;
+    if (n && !confirm(`Remove ${exById(entry.exerciseId).name} and its ${n} logged set(s) from this workout?`)) return;
     s.entries.splice(Number(el.dataset.e), 1);
     await saveSession(s);
     rerender();
@@ -704,10 +810,11 @@ const actions = {
     const inSession = new Set(s.entries.map((e) => e.exerciseId));
     const next = await swapSheet(current, inSession);
     if (!next) return;
-    if (entry.sets.length && !confirm(`Swapping clears the ${entry.sets.length} set(s) logged for ${current.name}. Continue?`)) return;
+    const n = doneSets(entry).length;
+    if (n && !confirm(`Swapping clears the ${n} set(s) logged for ${current.name}. Continue?`)) return;
     entry.swappedFrom = entry.swappedFrom || current.id;
     entry.exerciseId = next.id;
-    entry.sets = [];
+    entry.sets = Array.from({ length: Math.max(entry.sets.length, 1) }, newSet);
     entry.bodyweight = null;
     await ensureBodyweight(entry);
     await saveSession(s);
@@ -717,11 +824,15 @@ const actions = {
   async finish(el) {
     flushSave();
     const { s } = ctx(el);
-    const sets = s.entries.reduce((n, e) => n + (e.skipped ? 0 : e.sets.length), 0);
+    const sets = s.entries.reduce((n, e) => n + (e.skipped ? 0 : doneSets(e).length), 0);
     if (!sets) {
       if (confirm('No sets logged. Discard this workout?')) return actions.discard(el, true);
       return;
     }
+    const unlogged = s.entries.reduce((n, e) => n + (e.skipped ? 0 : e.sets.length - doneSets(e).length), 0);
+    if (unlogged && !confirm(`${unlogged} set(s) aren't ticked and won't be saved. Finish anyway?`)) return;
+    // Keep only the sets you actually did.
+    for (const e of s.entries) e.sets = doneSets(e);
     s.finishedAt = new Date().toISOString();
     await saveSession(s);
     toast(`Workout saved · ${sets} sets`);
@@ -840,12 +951,23 @@ document.addEventListener('click', (e) => {
 
 /* ===================== 7. Input handling ===================== */
 
-/** Re-draw the "Last: 100 × 10 +2" text for the set row that `el` belongs to. */
+/**
+ * After typing in a set: re-draw its "Last: 100 × 10 +2" text, and update the
+ * grey weight hints on the sets below (they follow the weight you're using today).
+ */
 function refreshCompare(el) {
   const { s, entry, set } = ctx(el);
-  const lastSet = lastTimeFor(entry.exerciseId, s)?.entry.sets[Number(el.dataset.j)];
-  const target = document.getElementById(`cmp-${s.id}-${el.dataset.e}-${el.dataset.j}`);
-  if (target) target.innerHTML = compareHtml(set, lastSet, exById(entry.exerciseId).bodyweight);
+  const ex = exById(entry.exerciseId);
+  const lastSets = lastTimeFor(entry.exerciseId, s)?.sets || [];
+  const e = el.dataset.e;
+  const target = document.getElementById(`cmp-${s.id}-${e}-${el.dataset.j}`);
+  if (target) target.innerHTML = compareHtml(set, lastSets[Number(el.dataset.j)], ex.bodyweight);
+  if (ex.bodyweight) return;
+  entry.sets.forEach((_, k) => {
+    const input = document.querySelector(`[data-field="kg"][data-s="${s.id}"][data-e="${e}"][data-j="${k}"]`);
+    const t = targetFor(entry, k, lastSets, ex);
+    if (input) input.placeholder = t.kg != null ? fmtKg(t.kg) : 'kg';
+  });
 }
 
 // Typing in weight / reps / plan-name fields.

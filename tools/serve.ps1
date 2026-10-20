@@ -11,6 +11,7 @@ $types = @{
 }
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
+$listener.Prefixes.Add("http://127.0.0.1:$Port/")
 $listener.Start()
 Write-Host "Serving $Root at http://localhost:$Port/"
 try {
